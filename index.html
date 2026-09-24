@@ -339,6 +339,7 @@
       overflow: hidden;
       box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.95);
       touch-action: none;
+      cursor: pointer;
     }
 
     canvas#gameCanvas {
@@ -348,6 +349,7 @@
       aspect-ratio: 560 / 550;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
+      cursor: pointer;
     }
 
     /* CRT Scanlines Overlay Effect */
@@ -379,6 +381,7 @@
       text-align: center;
       z-index: 20;
       transition: opacity 0.2s ease;
+      cursor: pointer;
     }
 
     .game-overlay.hidden {
@@ -1254,9 +1257,10 @@
     const keyThrottle = {};
     window.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
+      initAudio();
 
-      // Prevent scrolling
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'w', 'a', 's', 'd'].includes(key)) {
+      // Prevent scrolling on gameplay keys
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'enter', 'w', 'a', 's', 'd'].includes(key)) {
         e.preventDefault();
       }
 
@@ -1273,19 +1277,41 @@
         return;
       }
 
-      if (gameState === STATE.MENU && (key === ' ' || key === 'enter')) {
-        startGame();
-        return;
+      // Start from Menu using any action/directional key
+      if (gameState === STATE.MENU) {
+        if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', ' ', 'enter'].includes(key)) {
+          startGame();
+          if (key === 'arrowup' || key === 'w') {
+            tryHop('UP');
+            highlightDpad(dpadUp);
+          } else if (key === 'arrowdown' || key === 's') {
+            tryHop('DOWN');
+            highlightDpad(dpadDown);
+          } else if (key === 'arrowleft' || key === 'a') {
+            tryHop('LEFT');
+            highlightDpad(dpadLeft);
+          } else if (key === 'arrowright' || key === 'd') {
+            tryHop('RIGHT');
+            highlightDpad(dpadRight);
+          }
+          return;
+        }
       }
 
-      if (gameState === STATE.GAMEOVER && (key === ' ' || key === 'enter')) {
-        restartGame();
-        return;
+      // Restart from Game Over
+      if (gameState === STATE.GAMEOVER) {
+        if ([' ', 'enter', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(key)) {
+          restartGame();
+          return;
+        }
       }
 
-      if (gameState === STATE.VICTORY && (key === ' ' || key === 'enter')) {
-        nextLevel();
-        return;
+      // Advance from Victory
+      if (gameState === STATE.VICTORY) {
+        if ([' ', 'enter', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(key)) {
+          nextLevel();
+          return;
+        }
       }
 
       if (gameState === STATE.PLAYING) {
@@ -1316,16 +1342,31 @@
       setTimeout(() => btn.classList.remove('pressed'), 120);
     }
 
-    // D-Pad Touch / Click Listeners
+    // D-Pad Touch & Click Listeners (Work seamlessly from Menu, Gameplay, & Overlays)
     function setupTouchButton(elem, direction) {
       const handlePress = (e) => {
         e.preventDefault();
         initAudio();
+        highlightDpad(elem);
+
+        if (gameState === STATE.MENU) {
+          startGame();
+          tryHop(direction);
+          return;
+        }
+        if (gameState === STATE.GAMEOVER) {
+          restartGame();
+          return;
+        }
+        if (gameState === STATE.VICTORY) {
+          nextLevel();
+          return;
+        }
         if (gameState === STATE.PLAYING) {
           tryHop(direction);
-          highlightDpad(elem);
         }
       };
+
       elem.addEventListener('pointerdown', handlePress);
     }
 
@@ -1334,33 +1375,113 @@
     setupTouchButton(dpadLeft, 'LEFT');
     setupTouchButton(dpadRight, 'RIGHT');
 
-    // Canvas Swipe Gestures
-    let touchStartX = 0;
-    let touchStartY = 0;
+    // Canvas Tap, Click & Swipe Gestures (Direct interaction on canvas)
+    let pointerStartX = 0;
+    let pointerStartY = 0;
+    let pointerStartTime = 0;
+
+    function handlePointerStart(clientX, clientY) {
+      initAudio();
+      pointerStartX = clientX;
+      pointerStartY = clientY;
+      pointerStartTime = Date.now();
+    }
+
+    function handlePointerEnd(clientX, clientY) {
+      initAudio();
+      const dx = clientX - pointerStartX;
+      const dy = clientY - pointerStartY;
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+
+      if (gameState === STATE.MENU) {
+        startGame();
+        return;
+      }
+      if (gameState === STATE.GAMEOVER) {
+        restartGame();
+        return;
+      }
+      if (gameState === STATE.VICTORY) {
+        nextLevel();
+        return;
+      }
+
+      if (gameState === STATE.PLAYING) {
+        // Swipe gesture
+        if (Math.max(absX, absY) > 20) {
+          if (absX > absY) {
+            if (dx > 0) {
+              tryHop('RIGHT');
+              highlightDpad(dpadRight);
+            } else {
+              tryHop('LEFT');
+              highlightDpad(dpadLeft);
+            }
+          } else {
+            if (dy > 0) {
+              tryHop('DOWN');
+              highlightDpad(dpadDown);
+            } else {
+              tryHop('UP');
+              highlightDpad(dpadUp);
+            }
+          }
+          return;
+        }
+
+        // Tap or Click gesture: hop toward tapped position relative to frog
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = CANVAS_WIDTH / rect.width;
+        const scaleY = CANVAS_HEIGHT / rect.height;
+        const canvasX = (clientX - rect.left) * scaleX;
+        const canvasY = (clientY - rect.top) * scaleY;
+
+        const frogCenterX = frog.x + frog.width / 2;
+        const frogCenterY = frog.y + frog.height / 2;
+
+        const diffX = canvasX - frogCenterX;
+        const diffY = canvasY - frogCenterY;
+
+        if (Math.abs(diffX) > Math.abs(diffY)) {
+          if (diffX > 0) {
+            tryHop('RIGHT');
+            highlightDpad(dpadRight);
+          } else {
+            tryHop('LEFT');
+            highlightDpad(dpadLeft);
+          }
+        } else {
+          if (diffY > 0) {
+            tryHop('DOWN');
+            highlightDpad(dpadDown);
+          } else {
+            tryHop('UP');
+            highlightDpad(dpadUp);
+          }
+        }
+      }
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      handlePointerStart(e.clientX, e.clientY);
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
+      handlePointerEnd(e.clientX, e.clientY);
+    });
+
+    // Touch fallback
     canvas.addEventListener('touchstart', (e) => {
       initAudio();
       if (e.touches.length === 1) {
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
+        handlePointerStart(e.touches[0].clientX, e.touches[0].clientY);
       }
     }, { passive: true });
 
     canvas.addEventListener('touchend', (e) => {
-      if (e.changedTouches.length === 1 && gameState === STATE.PLAYING) {
-        const dx = e.changedTouches[0].clientX - touchStartX;
-        const dy = e.changedTouches[0].clientY - touchStartY;
-        const absX = Math.abs(dx);
-        const absY = Math.abs(dy);
-
-        if (Math.max(absX, absY) > 20) {
-          if (absX > absY) {
-            if (dx > 0) tryHop('RIGHT');
-            else tryHop('LEFT');
-          } else {
-            if (dy > 0) tryHop('DOWN');
-            else tryHop('UP');
-          }
-        }
+      if (e.changedTouches.length === 1) {
+        handlePointerEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
       }
     }, { passive: true });
 
@@ -1425,10 +1546,19 @@
       }
     }
 
-    btnStartGame.addEventListener('click', startGame);
-    btnResumeGame.addEventListener('click', togglePause);
-    btnRestartGame.addEventListener('click', restartGame);
-    btnNextLevel.addEventListener('click', nextLevel);
+    // Button & Full-Overlay Click Listeners
+    btnStartGame.addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+    startOverlay.addEventListener('click', () => { if (gameState === STATE.MENU) startGame(); });
+
+    btnResumeGame.addEventListener('click', (e) => { e.stopPropagation(); togglePause(); });
+    pauseOverlay.addEventListener('click', () => { if (gameState === STATE.PAUSED) togglePause(); });
+
+    btnRestartGame.addEventListener('click', (e) => { e.stopPropagation(); restartGame(); });
+    gameOverOverlay.addEventListener('click', () => { if (gameState === STATE.GAMEOVER) restartGame(); });
+
+    btnNextLevel.addEventListener('click', (e) => { e.stopPropagation(); nextLevel(); });
+    victoryOverlay.addEventListener('click', () => { if (gameState === STATE.VICTORY) nextLevel(); });
+
     btnSound.addEventListener('click', toggleSound);
     btnScanlines.addEventListener('click', toggleScanlines);
     btnPause.addEventListener('click', togglePause);
@@ -1436,6 +1566,9 @@
     // Initial High Score Render
     startHighScore.textContent = String(highScore).padStart(5, '0');
     txtHighScore.textContent = String(highScore).padStart(5, '0');
+
+    // Auto-focus window for instant keyboard readiness
+    window.focus();
 
     /* ==========================================================================
        PARTICLES SYSTEM
@@ -1586,7 +1719,7 @@
       let targetBayIndex = -1;
       for (let i = 0; i < HOME_BAYS.length; i++) {
         const bay = HOME_BAYS[i];
-        if (Math.abs(fcx - bay.x) <= 24) {
+        if (Math.abs(fcx - bay.x) <= 28) {
           targetBayIndex = i;
           break;
         }
@@ -1598,7 +1731,9 @@
           // Landing in an already filled bay results in death
           killFrog('squash');
         } else {
-          // Empty bay reached!
+          // Empty bay reached! Snap frog position to center of bay
+          frog.x = bay.x - frog.width / 2;
+          frog.y = 8;
           bay.filled = true;
           let earned = 200; // base bay points
 
@@ -2581,6 +2716,24 @@
 
     let lastTimestamp = 0;
 
+    function updateAmbientObstacles(dt) {
+      lanes.forEach(lane => {
+        lane.items.forEach(item => {
+          item.x += lane.speed * dt;
+          if (lane.speed > 0) {
+            if (item.x > CANVAS_WIDTH + 60) item.x = -item.width - 40;
+          } else {
+            if (item.x + item.width < -60) item.x = CANVAS_WIDTH + 40;
+          }
+          if (lane.obstacleType === 'turtle' && item.canDive) {
+            item.diveCycle = (item.diveCycle + dt) % 6.0;
+            item.isSubmerged = (item.diveCycle >= 4.2 && item.diveCycle <= 5.5);
+            item.isWarning = (item.diveCycle >= 3.2 && item.diveCycle < 4.2);
+          }
+        });
+      });
+    }
+
     function gameLoop(timestamp) {
       if (!lastTimestamp) lastTimestamp = timestamp;
       let dt = (timestamp - lastTimestamp) / 1000;
@@ -2591,6 +2744,9 @@
 
       if (gameState === STATE.PLAYING || gameState === STATE.DYING) {
         updatePhysics(dt);
+        updateParticles(dt);
+      } else if (gameState === STATE.MENU) {
+        updateAmbientObstacles(dt);
         updateParticles(dt);
       }
 
